@@ -2,8 +2,9 @@ import pandas as pd
 import numpy as np
 import itertools
 import matplotlib.pyplot as plt
-from sklearn import neighbors, model_selection
+from sklearn import neighbors, linear_model, model_selection, ensemble, svm, metrics, naive_bayes
 import seaborn
+import classification
 
 TRAIN_DATA_FILE = 'train.csv'
 TEST_DATA_FILE = 'test.csv'
@@ -91,7 +92,13 @@ def get_name_title(name):
 
 
 def get_names_title(names):
-    return [get_name_title(n) for n in names]
+    titles = [get_name_title(n) for n in names]
+    translations = {
+        'Capt.': 'Mr.', 'Countess.': 'Mrs.', 'Lady.': 'Mrs.', 'Mme.': 'Mrs.', 'Mlle.': 'Mrs.', 'Sir.': 'Mr.',
+        'Major.': 'Mr.', 'Rev.': 'Mr.', 'Don.': 'Mr.', 'Col.': 'Mr.'
+    }
+    titles = [translations.get(t, t) for t in titles]
+    return titles
 
 
 def count_list_values(l):
@@ -169,6 +176,7 @@ def get_features_list(df):
     # Remove features with low standard deviation
     features = [k for k, std in df[features].std().to_dict().items() if std > 0.0]
     # Remove features with low correlation with the output
+    # correlations_heatmap(df[features + [output_label]])
     out_corrs = abs(df[features+[output_label]].corr()[output_label]).to_dict()
     corr_t = 0.3
     features = [f for f in features if abs(out_corrs[f]) > corr_t]
@@ -195,60 +203,243 @@ def plot_categories(data):
     plt.show()
 
 
+def plot_feature_vs_output(feature, output):
+    f, ax = plt.subplots(1, 2, figsize=(18, 8))
+    data = pd.concat([feature, output], axis=1)
+    data.groupby([feature.name]).mean().plot.bar(ax=ax[0])
+    ax[0].set_title('%s vs %s' % (output.name, feature.name))
+    seaborn.countplot(feature.name, hue=output.name, data=data, ax=ax[1])
+    ax[1].set_title('%s: %s vs not %s' % (feature.name, output.name, output.name))
+    plt.show()
+
+
+def plot_count_table(x, y):
+    return pd.crosstab(x, y, margins=True)  # .style.background_gradient(cmap='summer_r')
+
+
+def factor_plot(x, y, hue):
+    data = pd.concat([x, y, hue], axis=1)
+    seaborn.factorplot(x.name, y.name, hue=hue.name, data=data)
+    plt.show()
+
+
+def violin_plot(x, y, hue):
+    f, ax = plt.subplots(1, 1, figsize=(18, 8))
+    data = pd.concat([x, y, hue], axis=1)
+    seaborn.violinplot(x.name, y.name, hue=hue.name, data=data, split=True, ax=ax)
+    ax.set_title('%s and %s vs %s' % (x.name, y.name, hue.name))
+    ax.set_yticks(range(0, 110, 10))
+    plt.show()
+
+
+def correlations_heatmap(data):
+    seaborn.heatmap(data.corr(), annot=True, cmap='RdYlGn', linewidths=0.2)  # data.corr()-->correlation matrix
+    fig = plt.gcf()
+    fig.set_size_inches(10, 8)
+    plt.show()
+
+
+class Classifier:
+    def __init__(self, clf, seed=0, params=None):
+        params['random_state'] = seed
+        self.clf = clf(**params)
+
+    def train(self, x_train, y_train):
+        self.clf.fit(x_train, y_train)
+
+    def predict(self, x):
+        return self.clf.predict(x)
+
+    def fit(self, x, y):
+        return self.clf.fit(x, y)
+
+    def feature_importances(self, x, y):
+        print(self.clf.fit(x, y).feature_importances_)
+
+
+def one_hot_encoding(df):
+    ohe_labels = ['Embarked', 'cabin_division', 'title']
+    return df.join(pd.get_dummies(df[ohe_labels]))
+
+
+class TitanicClassifier:
+
+    def __init__(self, model, output_correlation_th, features_correlation_th):
+        self.model = model
+        self.output_correlation_th = output_correlation_th
+        self.features_correlation_th = features_correlation_th
+        self.train = None
+        self.test = None
+        self.train_out = None
+        self.test_out = None
+
+    def add_data(self, train, train_out, test, test_out=None):
+        p_train, p_test = self.parse_data(train, train_out, test)
+        self.train = p_train
+        self.test = p_test
+        self.train_out = train_out
+        self.test_out = test_out
+
+    def fit(self):
+        self.model.fit(X=self.train.values, y=self.train_out.values)
+
+    def get_model_score(self):
+        print list(self.train.columns)
+        print 'Train Score:', self.model.score(X=self.train.values, y=self.train_out.values)
+        print 'Validation Score:', self.model.score(X=self.test.values, y=self.test_out.values)
+
+    def predict_probabilities(self):
+        return [x[1] for x in self.model.predict_proba(self.test.values)]
+
+    def parse_data(self, train, train_out, test):
+        df = train.append(test)
+        # Missing values on Age, Cabin, Embarked
+        # Age will be filled later
+        df['Cabin'] = df['Cabin'].fillna(UNKNOWN_LABEL)
+        df['Embarked'] = df['Embarked'].fillna(df['Embarked'].mode())
+        # ------------ Feature engineering ------------
+        # Add title feature
+        df['title'] = get_names_title(df['Name'].values)
+        # Replace Nan ages with mean title age
+        title_ages = df.groupby('title')['Age'].mean().to_dict()
+        for t, a in title_ages.items():
+            df.loc[(df['Age'].isnull()) & (df['title'] == t), 'Age'] = a
+        # Add cabin division
+        df['cabin_division'] = get_cabin_list_divisions(df['Cabin'].values)
+        # Add fare category
+        df['fare_category'] = get_fare_category(df['Fare'])
+        # Add age category
+        df['age_group'] = [int(np.round(i/10.0)) for i in df['Age'].values]
+        # Add is men
+        df['is_men'] = df['Sex'] == 'male'
+        # Add (woman | child) feature
+        children_t = 10
+        df['child_or_women'] = [r['Age'] <= children_t or r['Sex'] == 'female' for _, r in df.iterrows()]
+        # Add is_chid
+        df['is_child'] = [r['Age'] <= children_t for _, r in df.iterrows()]
+        # Add has family
+        df['has_family'] = [r['SibSp'] + r['Parch'] > 0 for _, r in df.iterrows()]
+        # Add family
+        df['family_n'] = [r['SibSp'] + r['Parch'] for _, r in df.iterrows()]
+        # Apply one hot encoding
+        df = one_hot_encoding(df)
+        # Drop object columns
+        obj_cols = [c for c in df.columns if df[c].dtype == 'object']
+        df = df.drop(obj_cols, axis=1)
+        # Remove correlated features
+        df = self.remove_correlated_features(df)
+        # Remove features with low correlation with the output
+        correlations = df.corrwith(train_out).to_dict()
+        features = [f for f in df.columns if abs(correlations[f]) > self.output_correlation_th]
+        df = df[features]
+
+        return df.loc[train.index], df.loc[test.index]
+
+    def remove_correlated_features(self, df):
+        corr_df = df[[c for c in df.columns if c != output_label]].corr()
+        corrs_info = self.get_correlated_columns_info(corr_df)
+        rmv_list = []
+        while len(corrs_info) > 0:
+            corrs_info = corrs_info.sort_values(['n_corr', 'avg_corr'], ascending=False)
+            to_remove = corrs_info.index[0]
+            print('Removing %s' % to_remove)
+            corr_df = corr_df.drop(to_remove, axis=0).drop(to_remove, axis=1)
+            rmv_list.append(to_remove)
+            corrs_info = self.get_correlated_columns_info(corr_df)
+
+        df = df.drop(rmv_list, axis=1)
+
+        return df
+
+    def get_correlated_columns_info(self, corr_df):
+        corr_df_s = abs(corr_df.stack())
+        # Get correlated features
+        corrs = corr_df_s.loc[[i for i in corr_df_s.index if i[0] != i[1]]]
+        corrs = corrs[corrs > self.features_correlation_th]
+        corrs_info = {
+            f: {'n_corr': len(corrs.loc[f]), 'avg_corr': corrs.loc[f].mean()}
+            for f in corrs.index.levels[0]
+        }
+        corrs_info = pd.DataFrame.from_dict(corrs_info, orient='index')
+
+        return corrs_info[corrs_info['n_corr'] > 0]
+
+
+def get_knn_score(train_df, test_df):
+    features = [f for f in train_df.columns if f != output_label]
+    x_train = train_df[features].as_matrix()
+    y_train = train_df[output_label].as_matrix()
+    x_test = test_df[features].as_matrix()
+    y_test = test_df[output_label].as_matrix()
+    knn = neighbors.KNeighborsClassifier()
+    knn.fit(X=x_train, y=y_train)
+
+    return knn.score(X=x_test, y=y_test)
+
+
+class ModelEnsemble:
+
+    def __init__(self, train_df, test_df):
+        self.train_df = train_df
+        self.test_df = test_df
+        self.prob_threshold = 0.5
+        self.validation_pct = 0.4
+
+    def get_validation_score(self):
+        m = classification.ClassificationModel(
+            train_df=self.train_df, test_df=self.test_df, output_label=output_label
+        )
+        train, train_out, validation, validation_out = m.split_train(validation_pct=self.validation_pct)
+        preds = self.get_predictions(train=train, train_out=train_out, test=validation)
+        hr_array = [not (preds[i] ^ validation_out.values[i]) for i in range(len(preds))]
+
+        return float(sum(hr_array)) / len(hr_array)
+
+    def get_predictions(self, train, train_out, test):
+        knn_model = TitanicClassifier(
+            model=neighbors.KNeighborsClassifier(),
+            features_correlation_th=0.8,
+            output_correlation_th=0.0
+        )
+        logreg_model = TitanicClassifier(
+            model=linear_model.LogisticRegression(),
+            features_correlation_th=0.8,
+            output_correlation_th=0.0
+        )
+        models = {'knn': knn_model, 'logreg': logreg_model}
+        probs = {}
+        for model_name, model in models.items():
+            print '>>', model_name
+            model.add_data(train=train, train_out=train_out, test=test)
+            model.fit()
+            probs[model_name] = model.predict_probabilities()
+
+        probs_means = np.mean(np.array(probs.values()), axis=0)
+
+        return [x > self.prob_threshold for x in probs_means]
+
+    def get_test_predictions(self):
+        train_out = self.train_df[output_label]
+        train = self.train_df.drop(output_label, axis=1)
+        return self.get_predictions(train=train, train_out=train_out, test=self.test_df)
+
+
 def main():
     # ------------ Read data ----------------
     df_train = pd.read_csv(TRAIN_DATA_FILE).set_index('PassengerId')
     df_test = pd.read_csv(TEST_DATA_FILE).set_index('PassengerId')
-    df_comp = df_train.append(df_test)
-    train_idx = df_train.index
-    test_idx = df_test.index
-    # Fill missing values
-    # Missing values on Age, Cabin, Embarked
-    df_comp['Age'] = df_comp['Age'].fillna(df_comp['Age'].mean())
-    df_comp['Cabin'] = df_comp['Cabin'].fillna(UNKNOWN_LABEL)
-    df_comp['Embarked'] = df_comp['Embarked'].fillna(UNKNOWN_LABEL)
-    # ------------ Feature engineering ------------
-    # Add title feature
-    df_comp['title'] = get_names_title(df_comp['Name'].values)
-    # Add cabin division
-    df_comp['cabin_division'] = get_cabin_list_divisions(df_comp['Cabin'].values)
-    # Add fare category
-    df_comp['fare_category'] = get_fare_category(df_comp['Fare'])
-    # Add (woman | child) feature
-    children_t = 16
-    df_comp['child_or_women'] = [r['Age'] < children_t or r['Sex'] == 'female' for _, r in df_comp.iterrows()]
-    # Add has family
-    df_comp['has_family'] = [r['SibSp'] + r['Parch'] > 0 for _, r in df_comp.iterrows()]
-    # Discretize variables
-    obj_variables = [k for k, v in df_comp.dtypes.to_dict().items() if v == 'object']
-    for c in obj_variables:
-        df_comp[c + '_d'] = discretize_series(df_comp[c])
-    # Get features
-    features = get_features_list(df_comp)
-    # ----------------- Train Model -----------------------
-    # KNN
-    # Get final training DataFrame
-    cols = features + [output_label]
-    df_f = df_comp.loc[train_idx, cols]
-    x = df_f[features].as_matrix()
-    y = df_f[output_label].as_matrix()
-    x_train, x_val, y_train, y_val = model_selection.train_test_split(x, y, test_size=0.2, random_state=42)
-    knn = neighbors.KNeighborsClassifier()
-    knn.fit(X=x_train, y=y_train)
-    y_pred = knn.predict(x_val)
-    plot_confusion_matrix(y_pred=y_pred, y_test=y_val)
-    print 'Score: %.1f' % (knn.score(X=x_val, y=y_val) * 100)
-    plt.show()
-    # Train model with whole training set
-    final_model = knn.fit(X=x, y=y)
-    generate_predictions_file(model=final_model, test_df=df_comp.loc[test_idx, features])
+    m = ModelEnsemble(train_df=df_train, test_df=df_test)
+    print m.get_validation_score()
+    predictions = m.get_test_predictions()
+    print predictions
+    generate_predictions_file(test_df=df_test, predictions=predictions)
 
 
-def generate_predictions_file(model, test_df):
-    pred = model.predict(test_df.values)
-    df = pd.Series(pred, index=test_df.index).astype(int)
+def generate_predictions_file(test_df, predictions):
+    df = pd.Series(predictions, index=test_df.index).astype(int)
     df.index.name = 'PassengerId'
     df.name = 'Survived'
+    print df
     df.to_csv(SUBMISSION_FILE_NAME, header=True)
 
 
