@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import itertools
 import matplotlib.pyplot as plt
-from sklearn import neighbors, linear_model, model_selection, ensemble, svm, metrics, naive_bayes
+from sklearn import neighbors, linear_model
 import seaborn
 import classification
 
@@ -108,7 +108,7 @@ def count_list_values(l):
 def discretize_series(s):
     cat_count = count_list_values(list(s.values))
     other_threshold = 1
-    categories = [i  if cat_count[i] > other_threshold else 'Other' for i in s.values]
+    categories = [i if cat_count[i] > other_threshold else 'Other' for i in s.values]
     return pd.Series(discretize_vector(categories), index=s.index)
 
 
@@ -132,30 +132,11 @@ def get_cabin_list_divisions(cabins):
     return [get_cabin_division(c) for c in cabins]
 
 
-def confusion_matrix_df(y_pred, y_test):
-    """
-    Confusion matrix DataFrame with model prediction labels in rows and test labels as columns.
-
-    :param y_pred:
-    :param y_test:
-    :return:
-    """
-    assert len(y_pred) == len(y_test)
-    labels = list(set(y_pred) | set(y_test))
-    cnf_df = pd.DataFrame(index=labels, columns=labels)
-    for p_l in labels:
-        for t_l in labels:
-            eq_lst = [(y_pred[i] == p_l and y_test[i] == t_l) for i in range(len(y_pred))]
-            cnf_df.loc[p_l, t_l] = len([i for i in eq_lst if i])
-
-    return cnf_df
-
-
 def get_fare_category(fare):
-    def classify(f):
-        if f < limit1:
+    def classify(fr):
+        if fr < limit1:
             return 1
-        elif f < limit2:
+        elif fr < limit2:
             return 2
         else:
             return 3
