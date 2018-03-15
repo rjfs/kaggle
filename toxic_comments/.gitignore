@@ -77,3 +77,7 @@ target/
 
 # exclude data from source control by default
 /data/
+/models/outputs/
+
+# Other file types
+*.hdf5

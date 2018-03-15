@@ -5,9 +5,11 @@ Based on Kaggle's user Bongo kernel:
 """
 import pandas as pd
 import matplotlib.pyplot as plt
-import click
 import time
-import re
+import click
+
+import keras_utils
+import load_data
 
 from nltk.stem.porter import PorterStemmer
 from nltk.tokenize import TweetTokenizer
@@ -15,70 +17,97 @@ from nltk.corpus import stopwords
 
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
-from keras.layers import Dense, Input, LSTM, Embedding, Dropout, Activation, GRU, Conv1D, MaxPooling1D
-from keras.layers import Bidirectional, GlobalMaxPool1D, Bidirectional
+from keras.layers import Dense, Input, Embedding, Dropout, GRU, Conv1D, MaxPooling1D
+from keras.layers import GlobalMaxPool1D, Bidirectional
 from keras.models import Model
-from keras import initializers, regularizers, constraints, optimizers, layers
-from sklearn.metrics import roc_auc_score
 from keras.models import load_model
+
+
+@click.command()
+@click.argument('data_path', type=click.Path(exists=True))
+def main(data_path):
+    train, val, test = load_data.load_train_val_test(data_path)
+    mod = CharGramCNN(epochs=1, sentences_maxlen=50)
+    # Run model
+    mod.run(train, val, test)
 
 
 class CharGramCNN:
 
-    def __init__(self, data_path):
-        self.data_path = data_path
-        self.n_filters = 30  # 100
-        self.sentences_maxlen = 300  # 500
+    def __init__(self, n_filters=50, epochs=6, sentences_maxlen=500):
+        self.n_filters = n_filters  # 100
+        self.sentences_maxlen = sentences_maxlen  # 500
         self.batch_size = 128  # 32
-        self.epochs = 2
+        self.epochs = epochs
         self.tokenizer = None
         self.model = None
         self.output_classes = ["toxic", "severe_toxic", "obscene", "threat", "insult", "identity_hate"]
         self.stopwords = stopwords.words('english')
         self.porter = PorterStemmer()
         self.tweet_tokenizer = TweetTokenizer()
-        self.max_str_len = 30
 
-    def run(self):
-        # Load data
-        train = pd.read_csv(self.data_path + 'train_train.csv', index_col='id')
-        val = pd.read_csv(self.data_path + 'train_validation.csv', index_col='id')
-        test = pd.read_csv(self.data_path + 'test.csv', index_col='id')
+    def run(self, train, validation, test):
+        # Fit model
+        self.fit(train=train, validation=validation)
+        # Generate predictions
+        timestr = time.strftime("%Y%m%d-%H%M%S")
+        val_preds = self.predictions_df(validation['comment_text'])
+        save_predictions(val_preds, fname=timestr+'-val')
+        test_preds = self.predictions_df(test['comment_text'])
+        save_predictions(test_preds, fname=timestr+'-test')
+
+    def predictions_df(self, comments):
+        """
+        Generates predictions DataFrame
+        :param comments: pandas.Series
+            Comments series, with its IDs as index
+        :return: pandas.DataFrame
+            Predicted probabilities for each one of the output classes
+        """
+        x = self.parse_data(comments)
+        preds = self.model.predict(x)
+        df = pd.DataFrame(preds, index=comments.index, columns=self.output_classes)
+        df.index.name = 'id'
+
+        return df
+
+    def fit(self, train, validation):
         # Initialize Keras tokenizer
         train_comments = train['comment_text']
         self.initialize_tokenizer(train_comments.values)
         # Parse data
         print('Parsing data')
-        x_train = self.parse_data(train_comments, clean=True)
-        x_val = self.parse_data(val['comment_text'], clean=True)
-        x_test = self.parse_data(test['comment_text'], clean=True)
-        # Build model
-        self.build_nn()
-        # Run model
+        x_train = self.parse_data(train_comments)
+        x_val = self.parse_data(validation['comment_text'])
+        # Initialize neural network
+        self.initialize_net()
+        # Train model
+        y_train = train[self.output_classes].values
+        y_val = validation[self.output_classes].values
+        self.train_model(x_train, y_train, x_val, y_val)
+
+    def train_model(self, x_train, y_train, x_val, y_val):
         self.model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
         self.model.summary()
-        y_train = train[self.output_classes].values
-        y_val = val[self.output_classes].values
+
+        # File used to save model checkpoints
+        model_filename = 'chargram-cnn.{0:03d}.hdf5'
+        last_finished_epoch = None
+        if last_finished_epoch is not None:
+            self.model = load_model(model_filename.format(last_finished_epoch-1))
+
         print('Fitting model')
-        hist = self.model.fit(
+        self.model.fit(
             x_train, y_train,
             batch_size=self.batch_size, epochs=self.epochs,
-            validation_data=(x_val, y_val)
+            validation_data=(x_val, y_val),
+            callbacks=[
+                keras_utils.ModelSaveCallback(model_filename),
+                keras_utils.TqdmProgressCallback()
+            ],
+            verbose=1,
+            initial_epoch=last_finished_epoch or 0
         )
-        print(hist)
-        # Print ROC AUC
-        y_pred = self.model.predict(x_val)
-        print(roc_auc_score(y_val, y_pred))
-        # Generate predictions
-        timestr = time.strftime("%Y%m%d-%H%M%S")
-        self.generate_predictions(x_val, ids=list(val.index), fname=timestr+'-val')
-        self.generate_predictions(x_test, ids=list(test.index), fname=timestr+'-test')
-
-    def generate_predictions(self, x, ids, fname):
-        preds = self.model.predict(x)
-        df = pd.DataFrame(preds, index=ids, columns=self.output_classes)
-        df.index.name = 'id'
-        df.to_csv(fname + '.out')
 
     def initialize_tokenizer(self, comments):
         max_features = 20000
@@ -86,7 +115,7 @@ class CharGramCNN:
         # Update internal vocabulary based on comments
         self.tokenizer.fit_on_texts(comments)
 
-    def build_nn(self):
+    def initialize_net(self):
         inp = Input(shape=(self.sentences_maxlen,))
         embed_size = 240
         x = Embedding(len(self.tokenizer.word_index) + 1, embed_size)(inp)
@@ -101,12 +130,7 @@ class CharGramCNN:
 
         self.model = Model(inputs=inp, outputs=x)
 
-    def parse_data(self, comments, plot=False, clean=False, lower=False):
-        if lower:
-            comments = comments.apply(lambda c: c.lower())
-        if clean:
-            print('Cleaning data')
-            comments = comments.apply(lambda c: self.clean(c))
+    def parse_data(self, comments, plot=False):
         # Convert texts to sequences
         tokenized = self.tokenizer.texts_to_sequences(comments)
         # Plot number of words histogram
@@ -117,27 +141,16 @@ class CharGramCNN:
 
         return x
 
-    def clean(self, comment):
-        comment = re.sub('[\\n]+', ' ', comment)
-        comment = re.sub('[\W]+', ' ', comment)
-
-        words = self.tweet_tokenizer.tokenize(comment)
-        words = [self.porter.stem(word[:self.max_str_len]) for word in words]
-        words = [w for w in words if w not in self.stopwords]
-
-        return " ".join(words)
-
-
-@click.command()
-@click.argument('data_path', type=click.Path(exists=True))
-def main(data_path):
-    mod = CharGramCNN(data_path)
-    mod.run()
-
 
 def plot_words_hist(tokenized_text):
     n_words = [len(c) for c in tokenized_text]
-    plt.hist(n_words)
+    plt.hist(n_words, bins='auto')
+
+
+def save_predictions(df, fname):
+    n = fname + '.out'
+    df.to_csv(n)
+    print('Saved to: %s' % n)
 
 
 if __name__ == '__main__':

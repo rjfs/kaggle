@@ -4,6 +4,7 @@ import click
 import logging
 import pandas as pd
 import numpy as np
+import clean_data
 
 np.random.seed(28)
 
@@ -11,18 +12,38 @@ np.random.seed(28)
 @click.command()
 @click.argument('input_filepath', type=click.Path(exists=True))
 @click.argument('output_filepath', type=click.Path())
-def main(input_filepath, output_filepath):
+@click.argument('mapping_file', type=click.Path())
+@click.option('--clean', is_flag=True)
+def main(input_filepath, output_filepath, mapping_file, clean=False):
     """ Runs data processing scripts to turn raw data from (../raw) into
         cleaned data ready to be analyzed (saved in ../processed).
     """
     logger = logging.getLogger(__name__)
     logger.info('making final data set from raw data')
-    data = pd.read_csv(input_filepath + 'train.csv', index_col='id')
+    raw_train = pd.read_csv(input_filepath + 'train.csv', index_col='id')
+    raw_test = pd.read_csv(input_filepath + 'test.csv', index_col='id')
+    # Output file names
+    train_fname = 'train-train.csv'
+    val_fname = 'train-val.csv'
+    test_fname = 'test.csv'
+    if clean:
+        cleaner = clean_data.DataCleaner(mapping_file)
+        train_val = cleaner.clean(raw_train)
+        test = cleaner.clean(raw_test)
+        train_fname = 'clean-' + train_fname
+        val_fname = 'clean-' + val_fname
+        test_fname = 'clean-' + test_fname
+    else:
+        train_val = raw_train
+        test = raw_test
     # Split train data in train and validation set
-    train, val = train_validation_split(data)
+    train, val = train_validation_split(train_val)
     # Save to output files
-    train.to_csv(output_filepath + 'train_train.csv')
-    val.to_csv(output_filepath + 'train_validation.csv')
+    logger.info('saving output')
+    train.to_csv(output_filepath + train_fname)
+    val.to_csv(output_filepath + val_fname)
+    test.to_csv(output_filepath + test_fname)
+    logger.info('done')
 
 
 def train_validation_split(data, train_pct=0.8):

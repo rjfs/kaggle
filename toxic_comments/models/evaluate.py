@@ -7,6 +7,10 @@ from sklearn.metrics import roc_auc_score
 @click.command()
 @click.argument('pred_path', type=click.Path(exists=True))
 @click.argument('true_path', type=click.Path(exists=True))
+def main(pred_path, true_path):
+    eval_validation(pred_path, true_path)
+
+
 def eval_validation(pred_path, true_path):
     preds = pd.read_csv(pred_path, index_col='id')
     trues = pd.read_csv(true_path, index_col='id')
@@ -23,4 +27,4 @@ def eval_validation(pred_path, true_path):
 
 
 if __name__ == '__main__':
-    eval_validation()
+    main()
