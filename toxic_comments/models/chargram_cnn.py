@@ -5,15 +5,9 @@ Based on Kaggle's user Bongo kernel:
 """
 import pandas as pd
 import matplotlib.pyplot as plt
-import time
-import click
 
 import keras_utils
 import load_data
-
-from nltk.stem.porter import PorterStemmer
-from nltk.tokenize import TweetTokenizer
-from nltk.corpus import stopwords
 
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
@@ -23,38 +17,38 @@ from keras.models import Model
 from keras.models import load_model
 
 
-@click.command()
-@click.argument('data_path', type=click.Path(exists=True))
-def main(data_path):
-    train, val, test = load_data.load_train_val_test(data_path)
-    mod = CharGramCNN(epochs=1, sentences_maxlen=50)
-    # Run model
-    mod.run(train, val, test)
-
-
 class CharGramCNN:
 
-    def __init__(self, n_filters=50, epochs=6, sentences_maxlen=500):
+    def __init__(self, n_filters=50, epochs=5, sentences_maxlen=500):
         self.n_filters = n_filters  # 100
         self.sentences_maxlen = sentences_maxlen  # 500
         self.batch_size = 128  # 32
         self.epochs = epochs
+        self.last_finished_epoch = 5
         self.tokenizer = None
         self.model = None
         self.output_classes = ["toxic", "severe_toxic", "obscene", "threat", "insult", "identity_hate"]
-        self.stopwords = stopwords.words('english')
-        self.porter = PorterStemmer()
-        self.tweet_tokenizer = TweetTokenizer()
+        self.train = None
+        self.validation = None
+        self.test = None
+        self.initial_weights_file = None
 
-    def run(self, train, validation, test):
-        # Fit model
-        self.fit(train=train, validation=validation)
-        # Generate predictions
-        timestr = time.strftime("%Y%m%d-%H%M%S")
-        val_preds = self.predictions_df(validation['comment_text'])
-        save_predictions(val_preds, fname=timestr+'-val')
-        test_preds = self.predictions_df(test['comment_text'])
-        save_predictions(test_preds, fname=timestr+'-test')
+    def load_data(self, data_path):
+        self.train, self.validation, self.test = load_data.load_train_val_test(
+            data_path, clean=True
+        )
+
+    def train_predictions(self):
+        return self.predictions_df(self.train['comment_text'])
+
+    def validation_predictions(self):
+        return self.predictions_df(self.validation['comment_text'])
+
+    def train_predictions(self):
+        return self.predictions_df(self.train['comment_text'])
+
+    def test_predictions(self):
+        return self.predictions_df(self.test['comment_text'])
 
     def predictions_df(self, comments):
         """
@@ -71,19 +65,19 @@ class CharGramCNN:
 
         return df
 
-    def fit(self, train, validation):
+    def fit(self):
         # Initialize Keras tokenizer
-        train_comments = train['comment_text']
+        train_comments = self.train['comment_text']
         self.initialize_tokenizer(train_comments.values)
         # Parse data
         print('Parsing data')
         x_train = self.parse_data(train_comments)
-        x_val = self.parse_data(validation['comment_text'])
+        x_val = self.parse_data(self.validation['comment_text'])
         # Initialize neural network
         self.initialize_net()
         # Train model
-        y_train = train[self.output_classes].values
-        y_val = validation[self.output_classes].values
+        y_train = self.train[self.output_classes].values
+        y_val = self.validation[self.output_classes].values
         self.train_model(x_train, y_train, x_val, y_val)
 
     def train_model(self, x_train, y_train, x_val, y_val):
@@ -92,9 +86,11 @@ class CharGramCNN:
 
         # File used to save model checkpoints
         model_filename = 'chargram-cnn.{0:03d}.hdf5'
-        last_finished_epoch = None
-        if last_finished_epoch is not None:
-            self.model = load_model(model_filename.format(last_finished_epoch-1))
+
+        if self.last_finished_epoch > 0:
+            self.model = load_model(model_filename.format(self.last_finished_epoch-1))
+        elif self.initial_weights_file is not None:
+            self.model = load_model(self.initial_weights_file)
 
         print('Fitting model')
         self.model.fit(
@@ -106,7 +102,7 @@ class CharGramCNN:
                 keras_utils.TqdmProgressCallback()
             ],
             verbose=1,
-            initial_epoch=last_finished_epoch or 0
+            initial_epoch=self.last_finished_epoch or 0
         )
 
     def initialize_tokenizer(self, comments):
@@ -154,4 +150,4 @@ def save_predictions(df, fname):
 
 
 if __name__ == '__main__':
-    main()
+    pass

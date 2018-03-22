@@ -26,7 +26,6 @@ class DataCleaner:
         text = re.sub("\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", "", text)
         # removing usernames
         text = re.sub("\[\[.*\]", "", text)
-
         # Split the sentences into words
         words = tokenizer.tokenize(text)
         # Replace some words
