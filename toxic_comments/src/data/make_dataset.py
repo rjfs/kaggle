@@ -1,20 +1,35 @@
 # -*- coding: utf-8 -*-
-import os
 import click
 import logging
 import pandas as pd
 import numpy as np
 import clean_data
-
-np.random.seed(28)
+import os
+import sys
 
 
 @click.command()
 @click.argument('input_filepath', type=click.Path(exists=True))
 @click.argument('output_filepath', type=click.Path())
-@click.argument('mapping_file', type=click.Path())
 @click.option('--clean', is_flag=True)
-def main(input_filepath, output_filepath, mapping_file, clean=False):
+def cmd_main(input_filepath, output_filepath, clean=False):
+    """ Runs main function with arguments taken from command line """
+    main(input_filepath, output_filepath, clean=clean)
+
+
+def run():
+    """ Runs main with hard coded arguments """
+    script_path = os.path.dirname(os.path.realpath(sys.argv[0]))
+    mod_path = '/'.join(script_path.split('/')[:-2]) + '/'
+    input_filepath = mod_path + 'data/raw/'
+    output_filepath = mod_path + 'data/processed/'
+    # Generate processed dataset
+    main(input_filepath, output_filepath, clean=False)
+    # Generate cleaned text processed dataset
+    main(input_filepath, output_filepath, clean=True)
+
+
+def main(input_filepath, output_filepath, clean=False):
     """ Runs data processing scripts to turn raw data from (../raw) into
         cleaned data ready to be analyzed (saved in ../processed).
     """
@@ -27,6 +42,8 @@ def main(input_filepath, output_filepath, mapping_file, clean=False):
     val_fname = 'train-val.csv'
     test_fname = 'test.csv'
     if clean:
+        data_dir = '/'.join(input_filepath.split('/')[:-2]) + '/'
+        mapping_file = data_dir + 'external/conv.csv'
         cleaner = clean_data.DataCleaner(mapping_file)
         train_val = cleaner.clean(raw_train)
         test = cleaner.clean(raw_test)
@@ -56,16 +73,15 @@ def train_validation_split(data, train_pct=0.8):
     :return: tuple of pandas.DataFrame
         (training_set, validation_set)
     """
+    np.random.seed(28)
     shuffled = data.iloc[np.random.permutation(len(data))]
     split_point = int(np.ceil(len(shuffled) * train_pct))
-    return shuffled.iloc[:split_point].sort_index(), shuffled.iloc[split_point:].sort_index()
+    train = shuffled.iloc[:split_point].sort_index()
+    val = shuffled.iloc[split_point:].sort_index()
+    return train, val
 
 
 if __name__ == '__main__':
     log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     logging.basicConfig(level=logging.INFO, format=log_fmt)
-
-    # not used in this stub but often useful for finding various files
-    project_dir = os.path.join(os.path.dirname(__file__), os.pardir, os.pardir)
-
-    main()
+    run()

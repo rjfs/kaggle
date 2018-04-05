@@ -6,14 +6,21 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import re
 from sklearn.pipeline import Pipeline
 import load_data
-import click
 import pandas as pd
 import multiprocessing
 import nltk
+import os
+import sys
 import string
+
 re_tok = re.compile(f'([{string.punctuation}“”¨«»®´·º½¾¿¡§£₤‘’])')
 
-WORDS_MAPPING_FILE_PATH = '/home/rafasa/code/kaggle/toxic_comments/data/external/conv.csv'
+SCRIPT_PATH = os.path.dirname(os.path.realpath(sys.argv[0]))
+MOD_PATH = '/'.join(SCRIPT_PATH.split('/')[:-1]) + '/'
+WORDS_MAPPING_FILE_PATH = MOD_PATH + 'data/external/conv.csv'
+OUTPUT_CLASSES = [
+    "toxic", "severe_toxic", "obscene", "threat", "insult", "identity_hate"
+]
 
 
 def tokenize(s):
@@ -23,7 +30,7 @@ def tokenize(s):
 class NaiveBayesSVM:
 
     def __init__(self):
-        self.output_classes = ["toxic", "severe_toxic", "obscene", "threat", "insult", "identity_hate"]
+        self.output_classes = OUTPUT_CLASSES
         self.n_processes = 1
         self.models = {}
         self.parser_args = {
@@ -104,7 +111,9 @@ class NaiveBayesSVM:
                 i[1] for i in self.models[c].predict_proba(parsed_comms)
             ]
 
-        df = pd.DataFrame(preds, index=comments.index, columns=self.output_classes)
+        df = pd.DataFrame(
+            preds, index=comments.index, columns=self.output_classes
+        )
         df.index.name = 'id'
 
         return df
@@ -112,7 +121,8 @@ class NaiveBayesSVM:
 
 class TextParser:
 
-    def __init__(self, lower=False, words_map=False, lemmatize=False, rmv_stops=False):
+    def __init__(self, lower=False, words_map=False, lemmatize=False,
+                 rmv_stops=False):
         self.lower = lower
         self.words_map = words_map
         self.lemmatize = lemmatize
@@ -184,13 +194,3 @@ class NBFeaturer(BaseEstimator, ClassifierMixin):
 def get_words_mapping():
     df = pd.read_csv(WORDS_MAPPING_FILE_PATH)
     return {k: v for k, v in df.values}
-
-
-@click.command()
-@click.argument('data_path', type=click.Path(exists=True))
-def main(data_path):
-    train, val, test = load_data.load_train_val_test(data_path, clean=False)
-
-
-if __name__ == '__main__':
-    main()

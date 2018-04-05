@@ -142,7 +142,8 @@ def count_comma(text):
 
 
 def capital_letters_pct(text):
-    """ Computes percentage of capital letters in given text, not counting with spaces"""
+    """ Computes percentage of capital letters in given text, not counting with
+        spaces """
     n_caps = sum([x.isupper() for x in text])
     n_lower = sum([x.islower() for x in text])
     if n_caps == 0 and n_lower == 0:
