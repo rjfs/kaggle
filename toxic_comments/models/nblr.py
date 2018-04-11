@@ -1,3 +1,8 @@
+"""
+Based on:
+    https://www.kaggle.com/jhoward/nb-svm-strong-linear-baseline
+    https://nlp.stanford.edu/pubs/sidaw12_simple_sentiment.pdf
+"""
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.linear_model import LogisticRegression
 from scipy import sparse
@@ -23,11 +28,7 @@ OUTPUT_CLASSES = [
 ]
 
 
-def tokenize(s):
-    return re_tok.sub(r' \1 ', s).split()
-
-
-class NaiveBayesSVM:
+class NaiveBayes:
 
     def __init__(self):
         self.output_classes = OUTPUT_CLASSES
@@ -173,9 +174,11 @@ class TextParser:
 
 class NBFeaturer(BaseEstimator, ClassifierMixin):
     def __init__(self, alpha):
-        self.alpha = alpha
+        self.alpha = alpha  # smoothing parameter
+        self._r = None
 
-    def preprocess_x(self, x, r):
+    @staticmethod
+    def preprocess_x(x, r):
         return x.multiply(r)
 
     def transform(self, x):
@@ -183,8 +186,13 @@ class NBFeaturer(BaseEstimator, ClassifierMixin):
         return x_nb
 
     def fit(self, x, y):
-        self._r = sparse.csr_matrix(np.log(self.pr(x, 1, y) / self.pr(x, 0, y)))
+        self._r = sparse.csr_matrix(self.log_count_ratio(x, y))
         return self
+
+    def log_count_ratio(self, x, y):
+        p_norm = self.pr(x, 1, y)
+        q_norm = self.pr(x, 0, y)
+        return np.log(p_norm / q_norm)
 
     def pr(self, x, y_i, y):
         p = x[y == y_i].sum(0)
@@ -194,3 +202,7 @@ class NBFeaturer(BaseEstimator, ClassifierMixin):
 def get_words_mapping():
     df = pd.read_csv(WORDS_MAPPING_FILE_PATH)
     return {k: v for k, v in df.values}
+
+
+def tokenize(s):
+    return re_tok.sub(r' \1 ', s).split()

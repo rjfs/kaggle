@@ -5,7 +5,12 @@ import numpy as np
 import utils
 import os
 
-mix_file = 'outputs/preprocessed_blend.csv'
+# https://www.kaggle.com/antmarakis/another-cleaned-data-blend-with-low-correlation/code
+blend_file = 'outputs/preprocessed_blend.csv'
+
+OUTPUT_CLASSES = [
+    "toxic", "severe_toxic", "obscene", "threat", "insult", "identity_hate"
+]
 
 
 @click.command()
@@ -17,7 +22,7 @@ def main(files_dir, trues_file):
         '20180320-142913-char-gram-val.out',
         # '20180320-184149-char-gram-val.out',
         # '20180320-222222-random-forest-val.out'
-        # '20180320-230610-random-forest-val.out'
+        '20180320-230610-random-forest-val.out'
     ]
     ens = Ensemble(files_names, files_dir, trues_file)
     ens.initialize()
@@ -38,7 +43,7 @@ class Ensemble:
         self.trues_file = trues_file
         self.trues = None
         self.models = []
-        self.output_classes = ["toxic", "severe_toxic", "obscene", "threat", "insult", "identity_hate"]
+        self.output_classes = OUTPUT_CLASSES
 
     def initialize(self):
         self.trues = pd.read_csv(self.trues_file, index_col='id')
@@ -61,7 +66,7 @@ class Ensemble:
                 for fp in file_paths
             }
             test = self.category_weighted_average(test_preds)
-            blend = pd.read_csv(mix_file, index_col='id')
+            blend = pd.read_csv(blend_file, index_col='id')
             test = 0.6 * test + 0.4 * blend
         else:
             raise NotImplementedError('Not implemented for \'%s\'' % method)

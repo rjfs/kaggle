@@ -11,10 +11,14 @@ import load_data
 
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
-from keras.layers import Dense, Input, Embedding, Dropout, GRU, Conv1D, MaxPooling1D
-from keras.layers import GlobalMaxPool1D, Bidirectional
+import keras.layers as kl
 from keras.models import Model
 from keras.models import load_model
+
+
+OUTPUT_CLASSES = [
+    "toxic", "severe_toxic", "obscene", "threat", "insult", "identity_hate"
+]
 
 
 class CharGramCNN:
@@ -27,7 +31,7 @@ class CharGramCNN:
         self.last_finished_epoch = 5
         self.tokenizer = None
         self.model = None
-        self.output_classes = ["toxic", "severe_toxic", "obscene", "threat", "insult", "identity_hate"]
+        self.output_classes = OUTPUT_CLASSES
         self.train = None
         self.validation = None
         self.test = None
@@ -44,9 +48,6 @@ class CharGramCNN:
     def validation_predictions(self):
         return self.predictions_df(self.validation['comment_text'])
 
-    def train_predictions(self):
-        return self.predictions_df(self.train['comment_text'])
-
     def test_predictions(self):
         return self.predictions_df(self.test['comment_text'])
 
@@ -60,7 +61,9 @@ class CharGramCNN:
         """
         x = self.parse_data(comments)
         preds = self.model.predict(x)
-        df = pd.DataFrame(preds, index=comments.index, columns=self.output_classes)
+        df = pd.DataFrame(
+            preds, index=comments.index, columns=self.output_classes
+        )
         df.index.name = 'id'
 
         return df
@@ -81,14 +84,18 @@ class CharGramCNN:
         self.train_model(x_train, y_train, x_val, y_val)
 
     def train_model(self, x_train, y_train, x_val, y_val):
-        self.model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
+        self.model.compile(
+            loss='binary_crossentropy', optimizer='adam', metrics=['accuracy']
+        )
         self.model.summary()
 
         # File used to save model checkpoints
         model_filename = 'chargram-cnn.{0:03d}.hdf5'
 
         if self.last_finished_epoch > 0:
-            self.model = load_model(model_filename.format(self.last_finished_epoch-1))
+            self.model = load_model(
+                model_filename.format(self.last_finished_epoch-1)
+            )
         elif self.initial_weights_file is not None:
             self.model = load_model(self.initial_weights_file)
 
@@ -112,17 +119,28 @@ class CharGramCNN:
         self.tokenizer.fit_on_texts(comments)
 
     def initialize_net(self):
-        inp = Input(shape=(self.sentences_maxlen,))
+        inp = kl.Input(shape=(self.sentences_maxlen,))
         embed_size = 240
-        x = Embedding(len(self.tokenizer.word_index) + 1, embed_size)(inp)
-        x = Conv1D(filters=self.n_filters, kernel_size=4, padding='same', activation='relu')(x)
-        x = MaxPooling1D(pool_size=4)(x)
-        gru = GRU(60, return_sequences=True, name='lstm_layer', dropout=0.2, recurrent_dropout=0.2)
-        x = Bidirectional(gru)(x)
-        x = GlobalMaxPool1D()(x)
-        x = Dense(25, activation="relu")(x)
-        x = Dropout(0.1)(x)
-        x = Dense(6, activation="sigmoid")(x)
+        x = kl.Embedding(len(self.tokenizer.word_index) + 1, embed_size)(inp)
+        x = kl.Conv1D(
+            filters=self.n_filters,
+            kernel_size=4,
+            padding='same',
+            activation='relu'
+        )(x)
+        x = kl.MaxPooling1D(pool_size=4)(x)
+        gru = kl.GRU(
+            60,
+            return_sequences=True,
+            name='lstm_layer',
+            dropout=0.2,
+            recurrent_dropout=0.2
+        )
+        x = kl.Bidirectional(gru)(x)
+        x = kl.GlobalMaxPool1D()(x)
+        x = kl.Dense(25, activation="relu")(x)
+        x = kl.Dropout(0.1)(x)
+        x = kl.Dense(6, activation="sigmoid")(x)
 
         self.model = Model(inputs=inp, outputs=x)
 
@@ -132,7 +150,8 @@ class CharGramCNN:
         # Plot number of words histogram
         if plot:
             plot_words_hist(tokenized)
-        # Since there are sentences with varying length of characters, we have to get them on a constant size
+        # Since there are sentences with varying length of characters,
+        # we have to get them on a constant size
         x = pad_sequences(tokenized, maxlen=self.sentences_maxlen)
 
         return x

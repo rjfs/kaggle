@@ -1,7 +1,7 @@
 import click
 import chargram_cnn
 import utils
-import nb_svm
+import nblr
 import logging
 import random_forest
 import time
@@ -19,7 +19,7 @@ def main(data_path, model):
     if model == 'char-gram':
         mod = chargram_cnn.CharGramCNN()
     elif model == 'nb-svm':
-        mod = nb_svm.NaiveBayesSVM()
+        mod = nblr.NaiveBayes()
     elif model == 'random-forest':
         mod = random_forest.ToxicRandomForest()
     else:
