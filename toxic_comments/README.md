@@ -3,7 +3,7 @@ toxic_comments
 
 Kaggle Toxic Comment Classification Challenge.
 
-The implemented model was able to achieve a Leaderboard score in the top 25% (1130th in 4551 participants).
+The implemented model was able to achieve a Leaderboard score in the top 25% (1130th out of 4551 participants).
 
 
 Project Organization
