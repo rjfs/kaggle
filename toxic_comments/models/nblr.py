@@ -74,6 +74,7 @@ class NaiveBayes:
 
     @staticmethod
     def _fit(x, y, res_dict, cat):
+        # TODO: Should apply TF-IDF only once (not in each process)
         print('Fitting \'%s\'...' % cat)
         tfidf = TfidfVectorizer(
             ngram_range=(1, 2), tokenizer=tokenize, min_df=3, max_df=0.9,
@@ -82,11 +83,7 @@ class NaiveBayes:
         nbf = NBFeaturer(alpha=10)
         model = LogisticRegression(C=4, dual=True)
 
-        pipeline = Pipeline([
-            ('tfidf', tfidf),
-            ('nbf', nbf),
-            ('lr', model)
-        ])
+        pipeline = Pipeline([('tfidf', tfidf), ('nbf', nbf), ('lr', model)])
 
         res_dict[cat] = pipeline.fit(X=x, y=y)
         print('Done')
