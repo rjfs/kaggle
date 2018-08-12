@@ -1,15 +1,36 @@
 import os
 import pandas as pd
 import datetime
+import numpy as np
+
+
+def downcast_dtypes(df):
+    """
+    Changes column types in the DataFrame:
+        `float64` type to `float32`
+        `int64`   type to `int32`
+    """
+    # Select columns to downcast
+    float_cols = [c for c in df if df[c].dtype == "float64"]
+    int_cols = [c for c in df if df[c].dtype == "int64"]
+
+    # Downcast
+    df[float_cols] = df[float_cols].astype(np.float32)
+    df[int_cols] = df[int_cols].astype(np.int32)
+
+    return df
 
 
 def get_script_dir():
     return os.path.dirname(os.path.realpath(__file__))
 
 
+def up_dir(path, n):
+    return '/'.join(path.split('/')[:-n])
+
+
 def get_data_dir():
-    dir_lst = get_script_dir().split('/')[:-2] + ['data']
-    return '/'.join(dir_lst)
+    return up_dir(get_script_dir(), 2) + '/data'
 
 
 def load_raw_data(fname, **read_csv_args):
@@ -35,3 +56,25 @@ def load_training(load_pct=1.0, parse_dts=True):
         df['date'] = df['date'].apply(lambda x: dts_conv[x])
 
     return df
+
+
+def load_monthly_data(target_label, **load_args):
+    data = load_training(**load_args)
+    # Aggregate monthly data
+    gb_list = ['date_block_num', 'shop_id', 'item_id']
+    monthly_data = data.groupby(gb_list)['item_cnt_day'].sum()
+    monthly_data.name = target_label
+    monthly_data = monthly_data.reset_index()
+    # Remove pairs with zero sales
+    mask = monthly_data[target_label] != 0.0
+    monthly_data = monthly_data[mask]
+
+    return monthly_data
+
+
+def chunker(seq, size):
+    return (seq[pos:pos + size] for pos in range(0, len(seq), size))
+
+
+def compute_score(y1, y2):
+    return ((y1.clip(0., 20.) - y2.clip(0., 20.)) ** 2).mean() ** .5
