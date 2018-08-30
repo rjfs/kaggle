@@ -2,6 +2,11 @@ import os
 import pandas as pd
 import datetime
 import numpy as np
+import time
+
+
+def get_timestamp():
+    return time.strftime("%Y%m%d-%H%M%S")
 
 
 def downcast_dtypes(df):
@@ -18,6 +23,16 @@ def downcast_dtypes(df):
     df[float_cols] = df[float_cols].astype(np.float32)
     df[int_cols] = df[int_cols].astype(np.int32)
 
+    return df
+
+
+def fix_shop_id(df):
+    # Якутск Орджоникидзе, 56
+    df.loc[df.shop_id == 0, 'shop_id'] = 57
+    # Якутск ТЦ "Центральный"
+    df.loc[df.shop_id == 1, 'shop_id'] = 58
+    # Жуковский ул. Чкалова 39м²
+    df.loc[df.shop_id == 10, 'shop_id'] = 11
     return df
 
 
@@ -55,10 +70,16 @@ def load_training(load_pct=1.0, parse_dts=True):
         }
         df['date'] = df['date'].apply(lambda x: dts_conv[x])
 
-    return df
+    return fix_shop_id(df)
+    
+    
+def load_test():
+    dtype = {'shop_id': 'int8', 'item_id': 'int16', 'ID': 'int32'}
+    df = load_raw_data('test.csv.gz', dtype=dtype)
+    return fix_shop_id(df)
 
 
-def load_monthly_data(target_label, **load_args):
+def load_monthly_data(target_label='item_cnt_month', **load_args):
     data = load_training(**load_args)
     # Aggregate monthly data
     gb_list = ['date_block_num', 'shop_id', 'item_id']

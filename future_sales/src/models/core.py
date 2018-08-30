@@ -3,10 +3,10 @@ import random
 import os
 import logging
 import pandas as pd
-import time
 from sklearn.preprocessing import StandardScaler
 import numpy as np
 from xgboost import XGBRegressor
+from lightgbm import LGBMRegressor
 from sklearn.externals import joblib
 
 
@@ -17,123 +17,42 @@ TARGET_LABEL = 'item_cnt_month'
 
 class Model:
     """ Use last sales values of each product """
-    def __init__(self, model, standardize=False, sample=None, train_clip=None,
-                 model_name=None):
+    def __init__(self, model, training_range, standardize=False, sample=None,
+                 model_name=None, drop_index=True, n_eval_months=3):
         self.model = model
+        self.training_range = training_range
         self.standardize = standardize
         self.sample = sample
-        self.train_clip = train_clip
         self.model_name = model_name
-        self.predictions = None
-        self.test = None
+        self.drop_index = drop_index
+        self.n_eval_months = n_eval_months
         self.features = None
         self.scaler = None
 
     @property
-    def train_feats(self):
+    def train(self):
         return self.features[self.features[MONTH_INT_LABEL] < self.test_m]
 
     @property
+    def test(self):
+        return self.months_features([self.test_m])
+
+    def months_features(self, m):
+        return self.features[self.features[MONTH_INT_LABEL].isin(m)]
+
+    @property
     def test_feats(self):
-        test_data = self.features[self.features[MONTH_INT_LABEL] == self.test_m]
-        return test_data.drop(TARGET_LABEL, axis=1)
+        return self.test.drop(INDEX_COLUMNS + [TARGET_LABEL], axis=1)
 
     @property
     def test_m(self):
         return self.features[MONTH_INT_LABEL].max()
-
-    def get_predictions_file(self):
-        # Train model
-        logging.info('training model')
-        self.train_model(self.train_feats)
-        # Save model to disk
-        logging.info('Saving model')
-        filename = 'model.sav' if self.model_name is None else self.model_name
-        fpath = utils.get_script_dir()
-        joblib.dump(self.model, fpath + filename)
-        # Make predictions and save
-        self.predictions = self.get_predictions()
-        logging.info('saving predictions')
-        self.save_preditions()
 
     def load_features(self):
         data_path = utils.get_data_dir() + '/processed/'
         train = pd.read_hdf(data_path + 'train_features.h5')
         test = pd.read_hdf(data_path + 'test_features.h5')
         self.features = train.append(test, sort=True)
-
-    def save_preditions(self):
-        out_dir = utils.get_script_dir()
-        fname = time.strftime("%Y%m%d-%H%M%S")
-        fpath = '%s/outputs/%s.csv' % (out_dir, fname)
-        # Create outputs dir if it does not exist yet
-        base_dir = os.path.dirname(fpath)
-        if not os.path.exists(base_dir):
-            os.makedirs(base_dir)
-
-        self.predictions.to_csv(fpath, header=True, index_label='ID')
-        logging.info('predictions saved to %s' % fpath)
-
-    def load_test(self):
-        self.test = utils.load_raw_data('test.csv.gz', index_col='ID')
-
-    def train_model(self, train_df, validation_df=None):
-        x, y = features_target_split(train_df)
-        xv, yv = None, None
-        if validation_df is not None:
-            xv, yv = features_target_split(validation_df)
-
-        if self.standardize:
-            self.scaler = StandardScaler()
-            self.scaler.fit(x)
-            x_transf = self.scaler.transform(x)
-            x = pd.DataFrame(x_transf, index=x.index, columns=x.columns)
-            del x_transf
-            if validation_df is not None:
-                xv_t = self.scaler.transform(xv)
-                xv = pd.DataFrame(xv_t, index=xv.index, columns=xv.columns)
-                del xv_t
-
-        if self.sample is not None and self.sample < len(x):
-            # Takes sample of given size from features
-            lst = range(x.shape[0])
-            sample_idx = sorted(random.sample(lst, self.sample))
-            x = x.iloc[sample_idx]
-            y = y.iloc[sample_idx]
-
-        # Print missing values
-        nans = x.isnull().sum()[x.isnull().sum() > 0]
-        if len(nans) > 0:
-            print('Number of missing values')
-            print(nans)
-
-        if self.train_clip is not None:
-            l, u = self.train_clip
-            y = y.clip(l, u)
-            if validation_df is not None:
-                yv = yv.clip(l, u)
-
-        print('Training with features:\n%s' % list(x.columns))
-        xgb_model = isinstance(self.model, XGBRegressor)
-        if validation_df is not None and xgb_model:
-            self.model.fit(
-                x, y,
-                eval_metric='rmse',
-                eval_set=[
-                    (x, np.clip(y, 0., 20.)), (xv, np.clip(yv, 0., 20.))
-                ],
-                verbose=True,
-                early_stopping_rounds=10
-            )
-        else:
-            self.model.fit(x, y)
-
-        if hasattr(self.model, 'coef_'):
-            importances = self.model.coef_ * np.std(x.values, 0)
-            print(dict(zip(x.columns, importances)))
-        if hasattr(self.model, 'feature_importances_'):
-            d = dict(zip(x.columns, self.model.feature_importances_))
-            sorted_dict_print(d)
 
     def predict(self, x):
         if self.standardize:
@@ -146,60 +65,207 @@ class Model:
 
         return pd.Series(preds, index=x.index).clip(0., 20.)
 
-    def get_predictions(self):
-        # Load raw test file
-        self.load_test()
-        # Predict model
-        shop_item_labels = ['shop_id', 'item_id']
-        preds_df = self.test_feats[shop_item_labels]
-        test_x = self.test_feats.drop(INDEX_COLUMNS, axis=1)
-        preds_df[TARGET_LABEL] = self.predict(test_x)
-        preds_df = self.test.merge(preds_df, on=shop_item_labels, how='outer')
-        preds_df.index.name = 'ID'
-        return preds_df[TARGET_LABEL].fillna(0.0).clip(0., 20.)
+    def get_predictions_file(self):
+        # Get predictions
+        test_x = features_target_split(self.test, self.drop_index)[0]
+        preds = self.train_and_predict(self.train, test_x)
+        # Compute predictions DataFrame
+        preds_df = self.test[INDEX_COLUMNS]
+        preds_df[TARGET_LABEL] = preds
+        test_raw = utils.fix_shop_id(utils.load_raw_data('test.csv.gz'))
+        preds_df = test_raw.merge(preds_df, on=['shop_id', 'item_id'])
+        # Save predictions to file
+        logging.info('saving predictions')
+        fpath = get_file_path()
+        preds_save = preds_df.set_index('ID')[TARGET_LABEL]
+        preds_save.to_csv(fpath, header=True)
+        logging.info('%s predictions saved to %s' % (len(preds_save), fpath))
 
-    def predict_months(self, month_i, month_f, fname=None):
+    def predict_months(self, month_i, month_f, block_size=1):
         month_preds = []
-        for m in range(month_i, month_f + 1):
-            logging.info('Predicting month %d' % m)
-            train = self.features[self.features[MONTH_INT_LABEL] < m]
-            test = self.features[self.features[MONTH_INT_LABEL] == m]
-            # Train model
-            self.train_model(train)
-            # Generate predictions
-            test_x, test_y = features_target_split(test)
-            df = test[INDEX_COLUMNS]
-            preds = self.predict(test_x)
+        rmse = {}
+        for m in range(month_i, month_f + 1, block_size):
+            months = list(range(m, m + block_size))
+            logging.info('Predicting months %s' % months)
+            test_x, test_y = features_target_split(
+                df=self.months_features(months),
+                drop_index=self.drop_index
+            )
+            # Get predictions
+            preds = self.train_and_predict(
+                self.features[self.features[MONTH_INT_LABEL] < m],
+                test_x=test_x, test_y=test_y
+            )
+            df = self.months_features(months)[INDEX_COLUMNS]
             df['item_cnt_month'] = preds
             month_preds.append(df)
             # Evaluate
-            train_x, train_y = features_target_split(train)
-            err_t = utils.compute_score(self.predict(train_x), train_y)
-            err_v = utils.compute_score(preds, test_y)
+            err_t, err_v = self.get_rmses(
+                train=self.features[self.features[MONTH_INT_LABEL] < m],
+                preds=preds,
+                trues=test_y
+            )
             print('Train: %.4f' % err_t)
             print('Validation: %.4f' % err_v)
+            rmse[m] = (err_t, err_v)
 
         app_df = month_preds.pop(0)
         while len(month_preds) > 0:
             app_df = app_df.append(month_preds.pop(0))
 
-        if fname is not None:
-            # Save to file
-            out_dir = utils.get_script_dir()
-            fpath = '%s/outputs/predictions/%s.csv' % (out_dir, fname)
-            app_df.set_index(MONTH_INT_LABEL).to_csv(fpath, header=True)
-            logging.info('predictions saved to %s' % fpath)
+        return app_df, rmse
 
-        return app_df
+    def get_rmses(self, train, preds, trues):
+        train_x, train_y = features_target_split(
+            df=train,
+            drop_index=self.drop_index
+        )
+        err_t = utils.compute_score(self.predict(train_x), train_y)
+        err_v = utils.compute_score(preds, trues)
+        return err_t, err_v
+        
+    def training_split(self, train_df, validation_df):
+        x, y = features_target_split(train_df, self.drop_index)
+        xv, yv = None, None
+        if validation_df is not None:
+            xv, yv = features_target_split(validation_df, self.drop_index)
+
+        return x, y, xv, yv
+
+    def train_and_predict(self, train, test_x, test_y=None):
+        # Train model
+        self.train_model(
+            train,
+            validation_df=test_x.join(test_y) if test_y is not None else None
+        )
+        return self.predict(test_x)
+        
+    def train_model(self, train_df, validation_df=None):
+        logging.info('training model')
+        # Remove values either too high or too low
+        train_df[TARGET_LABEL] = train_df[TARGET_LABEL].astype(np.float16)
+        train_df = train_df[train_df[TARGET_LABEL] >= self.training_range[0]]
+        train_df = train_df[train_df[TARGET_LABEL] <= self.training_range[1]]
+        # Split data into features and targets
+        x, y, xv, yv = self.training_split(train_df, validation_df)
+        has_validation = validation_df is not None and not yv.dropna().empty
+        # Free memory
+        del train_df
+        del validation_df
+        # Parse targets
+        y = y.clip(0., 20.).astype(np.int16)
+        if yv is not None:
+            yv = yv.clip(0., 20.)
+            if yv.isnull().sum() == 0:
+                yv = yv.astype(np.int16)
+        # Standardize data
+        if self.standardize:
+            self.scaler = StandardScaler()
+            self.scaler.fit(x)
+            x_transf = self.scaler.transform(x)
+            x = pd.DataFrame(x_transf, index=x.index, columns=x.columns)
+            del x_transf
+            if has_validation:
+                xv_t = self.scaler.transform(xv)
+                xv = pd.DataFrame(xv_t, index=xv.index, columns=xv.columns)
+                del xv_t
+
+        if self.sample is not None and self.sample < len(x):
+            # Takes sample of given size from features
+            lst = range(x.shape[0])
+            sample_idx = sorted(random.sample(lst, self.sample))
+            x = x.iloc[sample_idx]
+            y = y.iloc[sample_idx]
+
+        # Print missing values
+        print_missing_values(x)
+
+        print(
+            'Training with %d features (%d rows):\n%s' % 
+            (x.shape[1], x.shape[0], list(x.columns))
+        )
+        fit_params = {}
+        xgb_model = isinstance(self.model, XGBRegressor)
+        lgbm_model = isinstance(self.model, LGBMRegressor)
+        if xgb_model or lgbm_model:
+            fit_params['verbose'] = True
+            if has_validation:
+                fit_params['eval_metric'] = 'rmse'
+                fit_params['eval_set'] = [(x, y), (xv, yv)]
+                fit_params['early_stopping_rounds'] = 10
+
+        # Fit model
+        self.model.fit(x, y, **fit_params)
+
+        if hasattr(self.model, 'coef_'):
+            print('Coefficients:')
+            importances = self.model.coef_ * np.std(x.values, 0)
+            d = dict(zip(x.columns, importances))
+            sorted_dict_print(d)
+        if hasattr(self.model, 'feature_importances_'):
+            print('Features Importances:')
+            d = dict(zip(x.columns, self.model.feature_importances_))
+            sorted_dict_print(d)
+
+    def save_model(self):
+        logging.info('saving model')
+        filename = 'model.sav' if self.model_name is None else self.model_name
+        fpath = utils.get_script_dir()
+        joblib.dump(self.model, fpath + filename)
+        logging.info('done')
+
+    def save_predictions(self, preds):
+        out_dir = utils.get_script_dir()
+        fpath = '%s/outputs/predictions/%s.csv' % (out_dir, self.model_name)
+        preds.set_index(MONTH_INT_LABEL).to_csv(fpath, header=True)
+        logging.info('predictions saved to %s' % fpath)
+
+    def evaluate(self, n_evals):
+        logging.info('running evaluation')
+        month_f = self.test_m - 1
+        month_i = month_f - n_evals * self.n_eval_months + 1
+        preds, rmse = self.predict_months(
+            month_i, month_f, block_size=self.n_eval_months
+        )
+        print('Validation Results:')
+        print(rmse)
+        train_errs = np.array([i[0] for i in rmse.values()])
+        val_errs = np.array([i[1] for i in rmse.values()])
+        print('Mean Train: %.5f' % np.mean(train_errs))
+        print('Mean Validation: %.5f' % np.mean(val_errs))
+
+        return np.mean(val_errs)
 
 
-def features_target_split(df):
-    x = df.drop(INDEX_COLUMNS + [TARGET_LABEL], axis=1)
+def get_file_path():
+    out_dir = utils.get_script_dir()
+    fpath = '%s/outputs/%s.csv' % (out_dir, utils.get_timestamp())
+    # Create outputs dir if it does not exist yet
+    base_dir = os.path.dirname(fpath)
+    if not os.path.exists(base_dir):
+        os.makedirs(base_dir)
+
+    return fpath
+
+
+def features_target_split(df, drop_index):
+    x = df.drop(TARGET_LABEL, axis=1)
     y = df[TARGET_LABEL]
+    if drop_index:
+        x = x.drop(INDEX_COLUMNS, axis=1, errors='ignore')
+
     return x, y
 
 
 def sorted_dict_print(d):
     d_view = [(v, k) for k, v in d.items()]
     d_view.sort(reverse=True)
-    print(d_view)
+    for v in d_view:
+        print(v[0], v[1])
+
+
+def print_missing_values(x):
+    nans = x.isnull().sum()[x.isnull().sum() > 0]
+    if len(nans) > 0:
+        print('Number of missing values')
+        print(nans)

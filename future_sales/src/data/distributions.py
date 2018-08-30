@@ -60,7 +60,7 @@ def add_known_pairs(df, target_label):
     return out
 
 
-def fix_train_distribution(train, target_label):
+def fix_train_distribution(train, target_label='item_cnt_month'):
     """
     Fixes train distribution to be similar to test's
 
@@ -69,14 +69,14 @@ def fix_train_distribution(train, target_label):
     """
     index_cols = ['date_block_num', 'shop_id', 'item_id']
     grid = []
-    for block_num in train['date_block_num'].unique():
-        block_mask = train['date_block_num'] == block_num
-        cur_shops = train.loc[block_mask, 'shop_id'].unique()
-        cur_items = train.loc[block_mask, 'item_id'].unique()
-        prod = product(*[[block_num], cur_shops, cur_items])
-        grid.append(np.array(list(prod), dtype='int32'))
+    for m in train['date_block_num'].unique():
+        m_sales = train[train['date_block_num'] == m]
+        m_shops = m_sales['shop_id'].unique()
+        m_items = m_sales['item_id'].unique()
+        m_grid = np.array(list(product([m], m_shops, m_items)), dtype='int16')
+        grid.append(m_grid)
 
-    grid = pd.DataFrame(np.vstack(grid), columns=index_cols, dtype=np.int32)
+    grid = pd.DataFrame(np.vstack(grid), columns=index_cols, dtype=np.int16)
     train_p = train.merge(grid, on=index_cols, how='outer')
     train_p = train_p.sort_values(index_cols)
     train_p[target_label] = train_p[target_label].fillna(0)

@@ -8,9 +8,9 @@ from core import INDEX_COLUMNS, MONTH_INT_LABEL, TARGET_LABEL
 import sys
 sys.path.append('../')
 from features import build_features
-import evaluate
 import tuning
 import argparse
+import numpy as np
 
 
 pd.options.mode.chained_assignment = None  # default='warn'
@@ -21,8 +21,8 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-DEFAULT_MODEL = 'lasso'
-DEFAULT_TASK = 'predict_months'
+DEFAULT_MODEL = 'ridge'
+DEFAULT_TASK = 'validate'
 
 
 def main():
@@ -50,10 +50,12 @@ class Models:
     def __init__(self, name, task):
         """
         :param name: str
-            Either 'gbdt', 'knn', 'lasso' or 'previous'
+            Either 'gbdt', 'gbdt-lgb', 'knn', 'lasso' or 'previous'
             Model to be used.
             One of the following options:
                 'gbdt': XGBRegressor
+                'gbdt-lgb': LGBMRegressor
+                'dart': LGBMRegressor using 'dart' boosting type
                 'knn': KNeighborsRegressor
                 'lasso': Lasso linear regression
                 'previous': Previous sales model
@@ -83,13 +85,16 @@ class Models:
     def get_model(self):
         if self.name == 'gbdt':
             return tree.TunedGBDT()
+        elif self.name == 'gbdt-lgb':
+            return tree.LGBM('gbdt')
+        elif self.name == 'dart':
+            return tree.LGBM('dart')
         elif self.name == 'knn':
-            knn_params = {
-                'n_neighbors': 9, 'weights': 'uniform', 'p': 2, 'n_jobs': 6
-            }
-            return NeighborsModel(KNeighborsRegressor(**knn_params), sample=None)
+            return NeighborsModel(sample=2**16)
         elif self.name == 'lasso':
-            return linear.LassoRegression()
+            return linear.LassoRegression()#sample=2**21)
+        elif self.name == 'ridge':
+            return linear.RidgeRegression()
         elif self.name == 'previous':
             return LastSales()
         else:
@@ -98,8 +103,11 @@ class Models:
 
 class NeighborsModel(core.Model):
 
-    def __init__(self, model, n_evals=1, sample=None):
-        super().__init__(model, sample=sample, standardize=False)
+    def __init__(self, n_evals=1, sample=None):
+        super().__init__(
+            KNeighborsRegressor(), sample=sample, standardize=False,
+            training_range=(0., 40.), n_eval_months=3
+        )
         self.features = None
         self.n_evals = n_evals
         self.m0 = 29
@@ -151,13 +159,29 @@ class NeighborsModel(core.Model):
             target_col=TARGET_LABEL,
             month_col=MONTH_INT_LABEL
         )
-        # Fill some missing values
-        self.features = feats.fill_lags(self.features, 0)
-        self.features = feats.fill_counts(self.features, 0)
-        # Fill totals missing values
+        # Fill missing values
+        self.features = feats.fill_lags_nans(self.features)
+        max_v = self.features[MONTH_INT_LABEL].max()
+        fill_px = self.features['item_px_mean_L1'].dropna().median()
+        fill_vals = {
+            'first_sale': (max_v, np.int8),
+            'item_first_sale': (max_v, np.int8),
+            'last_sale': (max_v, np.int8),
+            'item_last_sale': (max_v, np.int8),
+            'item_px_mean_L1': (fill_px, np.float16),
+            'item_px_min_L1': (fill_px, np.float16),
+            'price_mean_trend': (0.0, np.float16),
+            'price_min_trend': (0.0, np.float16),
+            'month_shopcat_avg_L1': (0.0, np.float16),
+            'month_itemcity_avg_L1': (0.0, np.float16)
+        }
+        for c, (v, dtp) in fill_vals.items():
+            self.features[c] = self.features[c].fillna(v).astype(dtp)
+        
+        # Compute totals
         totals_lags = {
-            'item_id': [1, 2],
-            'shop_id': [12]
+            # 'item_id': [1],
+            # 'shop_id': [12]
         }
         for c, lags in totals_lags.items():
             print('Adding %s total' % c)
@@ -167,10 +191,6 @@ class NeighborsModel(core.Model):
         self.features = self.features[self.features[MONTH_INT_LABEL] >= self.m0]
         # Add month n
         self.features['month_n'] = self.features['date_block_num']
-        # Add interactions
-        self.features['trend_it'] = (
-            self.features['item_id_lag1'] - self.features['item_id_lag2']
-        )
 
     def features_importances(self):
         # TODO: Check why this method is so slow
@@ -188,35 +208,32 @@ class NeighborsModel(core.Model):
     def parse_features(self):
         self._parse_features()
         # Drop unnecessary columns
-        to_drop = [
-            'catname1', 'catname2',
-            'item_category_id',
-            'month_n',
-            'item_price_last_lag1',
-            'month', 'month_range', 'n_weekend', 'item_cnt_day_min', 'lag4',
-            'lag5', 'item_id_lag2', 'lag2', 'lag3', 'lag12',
-            # 'lag1',
+        cols = [
+            # 'month_shopcat_avg_L1',
+            'item_cnt_month_L1',
+            'cum_sales_L1',
+            # 'month_itemcity_avg_L1',
+            # 'item_id_lag1'
         ]
-        self.features.drop(to_drop, axis=1, inplace=True, errors='ignore')
+        self.features = self.features[cols + INDEX_COLUMNS + [TARGET_LABEL]]
+        # self.features.drop(to_drop, axis=1, inplace=True, errors='ignore')
         # Divide features by standard deviation
-        for c in self.features:
+        for c in self.features.columns:
             if c not in INDEX_COLUMNS and c != TARGET_LABEL:
-                self.features[c] /= self.features[c].std()
-
+                c_std = self.features[c].std()
+                if not np.isnan(c_std):
+                    self.features[c] /= c_std
+                    
+        # Downcast
+        for c in self.features.columns:
+            if c not in INDEX_COLUMNS:
+                self.features[c] = self.features[c].astype(np.float16)
+        
+        self.features.info()
+        
     def get_validation_score(self):
-        logging.info('loading features')
-        self.load_features()
-        logging.info('computing new features')
-        self.parse_features()
-        logging.info('running evaluation')
-        self.evaluate(self.train_feats)
-
-    def evaluate(self, data):
-        me = evaluate.ModelEvaluation(
-            model_class=self, n_evals=self.n_evals
-        )
-        me.evaluate(data)
-        logging.info('done')
+        self.initialize()
+        self.evaluate(self.n_evals)
 
 
 class LastSalesModel:
