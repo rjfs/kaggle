@@ -13,8 +13,8 @@ To generate the final predictions, the following steps should be executed in the
     
     Beyond other functionalities, the following commands are mandatory to generate files used by ensemble model:
     
-        python src/models/main.py --model='lasso' --task='predict_months'
-        python src/models/main.py --model='gbdt' --task='predict_months'
+        python src/models/main.py --model='gbdt-dart' --task='predict_months'
+        python src/models/main.py --model='gbdt-lgb' --task='predict_months'
 4. Run notebook 'notebooks/ensemble.ipynb' to generate final submission file.
         
 

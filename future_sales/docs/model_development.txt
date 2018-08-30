@@ -1,12 +1,13 @@
 After doing some data distribution analysis on train and test sets, I concluded that train set had to be augmented in order to better look like test set. After this change, some features were generated, like:
 - Lag features (1, 2, 3, 4, 5 and 12 months)
 - Prices features (Price of item relative to other shops, min/max price of item, etc)
+- Target mean encoded features (item in given shop, item in given city, category in given city, etc.)
 - Date features (month, number of days in month, number of weekend days in month)
 - Features interactions (Difference between number of items sold in last month and two months ago)
 Not all the features ended up being used.
 
-After generating and parsing features, two models are applied:
-- L1 Regularized Linear Regression (sklearn Lasso)
-- Gradient Boosting Decision Trees (xgboost XGBRegressor)
+Different models were implemented but the best ones were:
+- LightGBM with GBDT boosting type
+- LightGBM with Dart boosting type
 
 Then, a L2 Regularized Linear Regression is applied to generate an ensemble.
