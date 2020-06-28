@@ -80,7 +80,11 @@ class LinearModel(core.Model):
             'item_px_mean_L1': (fill_px, np.float16),
             'item_px_min_L1': (fill_px, np.float16),
             'price_mean_trend': (0.0, np.float16),
-            'price_min_trend': (0.0, np.float16)
+            'price_min_trend': (0.0, np.float16),
+            'release_cat': (6.0, np.float16),
+            'release_metacat': (6.0, np.float16),
+            'release_months': (6.0, np.float16),
+            'release_shop': (6.0, np.float16),
         }
         for c, (v, dtp) in fill_vals.items():
             self.features[c] = self.features[c].fillna(v).astype(dtp)
@@ -143,6 +147,15 @@ class LinearModel(core.Model):
             self.features['item_price_last_L1'] -
             self.features['item_px_min_L1']
         ).fillna(0.0)
+        
+        to_drop = [
+            'cum_cat_sales_L1', 'cum_metacat_sales_L1', 'cum_sales_L1',
+            'item_cnt_day_min_L1', 'item_px_min_L1', 'month',
+            'rel_shopcat', 'rel_shopmetacat', 'month_item_avg_L2',
+            'month_item_avg_L6'
+        ]
+        self.features.drop(to_drop, axis=1, inplace=True, errors='ignore')
+        
         self.select_features()
         self.features.info()
 

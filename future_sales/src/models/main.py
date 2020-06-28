@@ -21,8 +21,8 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-DEFAULT_MODEL = 'ridge'
-DEFAULT_TASK = 'validate'
+DEFAULT_MODEL = 'dart'
+DEFAULT_TASK = 'perm-importances'
 
 
 def main():
@@ -73,6 +73,10 @@ class Models:
         m = self.get_model()
         if self.task == 'optimize':
             m.parameters_search()
+        elif self.task == 'optimize-features':
+            m.features_search()
+        elif self.task == 'perm-importances':
+            m.get_permutation_importances()
         elif self.task == 'validate':
             m.get_validation_score()
         elif self.task == 'predict':
@@ -92,7 +96,7 @@ class Models:
         elif self.name == 'knn':
             return NeighborsModel(sample=2**16)
         elif self.name == 'lasso':
-            return linear.LassoRegression()#sample=2**21)
+            return linear.LassoRegression()  # sample=2**21)
         elif self.name == 'ridge':
             return linear.RidgeRegression()
         elif self.name == 'previous':
@@ -106,10 +110,8 @@ class NeighborsModel(core.Model):
     def __init__(self, n_evals=1, sample=None):
         super().__init__(
             KNeighborsRegressor(), sample=sample, standardize=False,
-            training_range=(0., 40.), n_eval_months=3
+            training_range=(0., 40.), n_eval_months=3, n_evals=n_evals
         )
-        self.features = None
-        self.n_evals = n_evals
         self.m0 = 29
 
     def get_months_predictions(self, month_i, month_f):
@@ -131,14 +133,6 @@ class NeighborsModel(core.Model):
             eval_funct=self.get_model_score
         )
         prs.run()
-
-    def get_model_score(self, model):
-        # Update model
-        self.model = model
-        me = evaluate.ModelEvaluation(
-            model_class=self, n_evals=self.n_evals
-        )
-        return me.evaluate(self.train_feats)
 
     @property
     def params_lists(self):
@@ -192,19 +186,6 @@ class NeighborsModel(core.Model):
         # Add month n
         self.features['month_n'] = self.features['date_block_num']
 
-    def features_importances(self):
-        # TODO: Check why this method is so slow
-        self.load_features()
-        self.features = self.features.fillna(0.0)
-        self._parse_features()
-        fixed_cols = INDEX_COLUMNS + [TARGET_LABEL]
-        cols = [c for c in self.features.columns if c not in fixed_cols]
-
-        for c in cols:
-            print('-------- Evaluating %s --------' % c)
-            feats = self.features[fixed_cols + [c]]
-            self.evaluate(feats[feats[MONTH_INT_LABEL] < 34])
-
     def parse_features(self):
         self._parse_features()
         # Drop unnecessary columns
@@ -233,7 +214,7 @@ class NeighborsModel(core.Model):
         
     def get_validation_score(self):
         self.initialize()
-        self.evaluate(self.n_evals)
+        self.evaluate()
 
 
 class LastSalesModel:
@@ -260,16 +241,6 @@ class LastSales(core.Model):
         self.load_test()
         self.get_predictions()
         self.save_preditions()
-
-    def get_validation_score(self):
-        logging.info('loading features')
-        self.get_last_sales()
-        # Fill missing values
-        logging.info('running evaluation')
-        me = evaluate.ModelEvaluation(
-            model_class=self, n_evals=self.n_evals
-        )
-        me.evaluate(self.train_feats)
 
     def get_last_sales(self):
         self.load_features()

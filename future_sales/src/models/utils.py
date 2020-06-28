@@ -26,6 +26,13 @@ def downcast_dtypes(df):
     return df
 
 
+def random_subset(l, min_n=1, max_n=None):
+    max_n = max_n if max_n is not None else len(l) + 1
+    n = max(np.random.randint(len(l) + 1), min_n)
+    n = min(n, max_n)
+    return np.random.permutation(l)[:n]
+
+
 def fix_shop_id(df):
     # Якутск Орджоникидзе, 56
     df.loc[df.shop_id == 0, 'shop_id'] = 57

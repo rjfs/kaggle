@@ -9,6 +9,52 @@ class Features:
         self.month_col = month_col
         self.target_col = target_col
 
+    def add_shop_unique(self, data):
+        print('Adding shop unique')
+        label = 'shop_unique'
+        # Add shop exclusive sold categories
+        exclusives = {  # shop_id: item_category_id
+            9: 12,
+            10: 26,
+            26: 55,
+            27: 55,
+            31: 55,
+            34: 55,
+            36: 55,
+            44: 55,
+            50: 11,
+            51: 38,
+            52: 4,
+            54: 55,
+            74: 55,
+            76: 55,
+            78: 55
+        }
+        inv_exclusives = invert_dict(exclusives)
+        data[label] = 0
+        for s, cats in inv_exclusives.items():
+            mask = (data.shop_id == s) & (data.item_category_id.isin(cats))
+            data.loc[mask, label] = 1
+
+        data[label] = data[label].astype(np.int8)
+        return data
+
+    def add_not_solds(self, data):
+        print('Adding not sold')
+        label = 'cat_not_sold'
+        # Add feature that indicates a certain category is sold everywhere but
+        # in given shop
+        # item_category_id: shop
+        not_sold = {63: 55, 65: 55, 67: 55, 69: 55, 70: 55, 72: 55}
+        inv_not_sold = invert_dict(not_sold)
+        data[label] = 0
+        for s, cats in inv_not_sold.items():
+            mask = (data.shop_id == s) & (data.item_category_id.isin(cats))
+            data.loc[mask, label] = 1
+        
+        data[label] = data[label].astype(np.int8)
+        return data
+
     def add_price_features(self, data):
         px_label = 'item_price_last_L1'
         lag1_label = 'item_cnt_month_L1'
@@ -134,3 +180,12 @@ class Features:
     def remove_month(self, data, m):
         # Removes months with numbers less than first_m
         return data[data[self.month_col] != m]
+        
+        
+def invert_dict(d):
+    inv_d = {}
+    for v in set(d.values()):
+        inv_d[v] = [i for i, j in d.items() if j == v]
+        
+    return inv_d
+

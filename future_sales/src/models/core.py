@@ -8,6 +8,9 @@ import numpy as np
 from xgboost import XGBRegressor
 from lightgbm import LGBMRegressor
 from sklearn.externals import joblib
+import eli5
+import matplotlib.pyplot as plt
+# from eli5.sklearn import PermutationImportance
 
 
 INDEX_COLUMNS = ['date_block_num', 'shop_id', 'item_id']
@@ -18,7 +21,7 @@ TARGET_LABEL = 'item_cnt_month'
 class Model:
     """ Use last sales values of each product """
     def __init__(self, model, training_range, standardize=False, sample=None,
-                 model_name=None, drop_index=True, n_eval_months=3):
+                 model_name=None, drop_index=True, n_eval_months=3, n_evals=1):
         self.model = model
         self.training_range = training_range
         self.standardize = standardize
@@ -26,6 +29,7 @@ class Model:
         self.model_name = model_name
         self.drop_index = drop_index
         self.n_eval_months = n_eval_months
+        self.n_evals = n_evals
         self.features = None
         self.scaler = None
 
@@ -220,10 +224,10 @@ class Model:
         preds.set_index(MONTH_INT_LABEL).to_csv(fpath, header=True)
         logging.info('predictions saved to %s' % fpath)
 
-    def evaluate(self, n_evals):
+    def evaluate(self):
         logging.info('running evaluation')
         month_f = self.test_m - 1
-        month_i = month_f - n_evals * self.n_eval_months + 1
+        month_i = month_f - self.n_evals * self.n_eval_months + 1
         preds, rmse = self.predict_months(
             month_i, month_f, block_size=self.n_eval_months
         )
@@ -235,6 +239,44 @@ class Model:
         print('Mean Validation: %.5f' % np.mean(val_errs))
 
         return np.mean(val_errs)
+
+    def permutation_importances(self, months=None):
+        logging.info('training model')
+
+        if months is None:
+            months = [31, 32, 33]
+
+        test_x, test_y = features_target_split(
+            df=self.months_features(months),
+            drop_index=self.drop_index
+        )
+        # Train model
+        train = self.features[self.features[MONTH_INT_LABEL] < min(months)]
+        self.train_model(train, validation_df=test_x.join(test_y))
+        # Compute importances
+        logging.info('computing permutation importances')
+        self.get_score_importances(test_x, test_y)
+
+    def get_score_importances(self, x, y, n_runs=3):
+        base_score = utils.compute_score(self.predict(x), y)
+        scores = {}
+        for c in x.columns:
+            x_shuff = x.copy()
+            scores[c] = []
+            for _ in range(n_runs):
+                x_shuff[c] = x_shuff[c].sample(frac=1).values
+                score = utils.compute_score(self.predict(x_shuff), y)
+                scores[c].append(score - base_score)
+
+        scores_tup = [(c, np.mean(v), np.std(v)) for c, v in scores.items()]
+        scores_tup = sorted(scores_tup, key=lambda k: k[1], reverse=True)
+        # Re-scale scores
+        min_sc = min([i[1] for i in scores_tup])
+        max_sc = max([i[1] for i in scores_tup])
+        rng = max_sc - min_sc
+        scores_tup = [(k[0], k[1]/rng, k[2]/rng) for k in scores_tup]
+        for k in scores_tup:
+            print('%-20s | %.3f +- %.3f' % k)
 
 
 def get_file_path():
